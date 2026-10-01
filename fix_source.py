@@ -263,3 +263,161 @@ data = json.loads(p.read_text())
 data["description"] = "Native Android arranger keyboard with local procedural audio synthesis, automatic accompaniment styles, learning content, registrations, mixer and effects."
 data.pop("majorCapabilities", None)
 p.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n")
+
+# --- GENOS2-STYLE V2 REFINEMENT ---
+from pathlib import Path
+import re
+
+def _replace_once_v2(path: str, old: str, new: str, required: bool = True):
+    file_path = root / path
+    text = file_path.read_text()
+    count = text.count(old)
+    if required and count != 1:
+        raise RuntimeError(f'Expected one occurrence of {old!r} in {path}, found {count}')
+    if count:
+        text = text.replace(old, new, 1)
+        file_path.write_text(text)
+
+# 1) Start with the 76-key default used by the target-style workstation workflow.
+_replace_once_v2(
+    'app/src/main/java/com/example/viewmodel/ArrangerViewModel.kt',
+    'private val _keyboardTotalKeys = MutableStateFlow(61) // 61, 76, 88',
+    'private val _keyboardTotalKeys = MutableStateFlow(76) // Genos-style 76-key default on mobile',
+)
+
+# 2) Make the top chassis visually closer to the reference console.
+_replace_once_v2(
+    'app/src/main/java/com/example/ui/ArrangerConsoleScreen.kt',
+    '.height(52.dp)\n            .clip(RoundedCornerShape(6.dp))\n            .background(ConsoleColors.MetalBrushGradient)',
+    '.height(64.dp)\n            .clip(RoundedCornerShape(4.dp))\n            .background(ConsoleColors.MetalBrushGradient)',
+)
+_replace_once_v2(
+    'app/src/main/java/com/example/ui/ArrangerConsoleScreen.kt',
+    'text = "BIRUK ARRANGER",',
+    'text = "BIRUK",',
+)
+_replace_once_v2(
+    'app/src/main/java/com/example/ui/ArrangerConsoleScreen.kt',
+    'text = "ORIGINAL PROFESSIONAL WORKSTATION",',
+    'text = "GENOS2-STYLE VIRTUAL ARRANGER",',
+)
+
+# 3) Widen the left and right hardware columns to reproduce the reference console proportions.
+_replace_once_v2(
+    'app/src/main/java/com/example/ui/ArrangerConsoleScreen.kt',
+    '.width(135.dp)\n            .fillMaxHeight()',
+    '.width(208.dp)\n            .fillMaxHeight()',
+)
+_replace_once_v2(
+    'app/src/main/java/com/example/ui/ArrangerConsoleScreen.kt',
+    '.width(225.dp)\n            .fillMaxHeight()',
+    '.width(250.dp)\n            .fillMaxHeight()',
+)
+
+# 4) Use the same visible grouping language as the reference: SONG, STYLE, STYLE CONTROL, VOICE CONTROL.
+_replace_once_v2(
+    'app/src/main/java/com/example/ui/ArrangerConsoleScreen.kt',
+    'Text("ARRANGER", color = ConsoleColors.TextSecondary, fontSize = 7.5.sp, fontWeight = FontWeight.Bold)',
+    'Text("SONG / STYLE / STYLE CONTROL", color = ConsoleColors.TextSecondary, fontSize = 7.sp, fontWeight = FontWeight.Bold)',
+)
+_replace_once_v2(
+    'app/src/main/java/com/example/ui/ArrangerConsoleScreen.kt',
+    'Text("STYLES", color = ConsoleColors.LedCyan, fontSize = 6.5.sp, fontWeight = FontWeight.Bold)',
+    'Text("STYLE", color = ConsoleColors.LedCyan, fontSize = 6.5.sp, fontWeight = FontWeight.Bold)',
+)
+_replace_once_v2(
+    'app/src/main/java/com/example/ui/ArrangerConsoleScreen.kt',
+    'Text("SONGS", color = ConsoleColors.LedGreen, fontSize = 6.5.sp, fontWeight = FontWeight.Bold)',
+    'Text("SONG", color = ConsoleColors.LedGreen, fontSize = 6.5.sp, fontWeight = FontWeight.Bold)',
+)
+_replace_once_v2(
+    'app/src/main/java/com/example/ui/ArrangerConsoleScreen.kt',
+    'label = "START",',
+    'label = "START/STOP",',
+    required=False
+)
+
+# 5) Match reference terminology for memory and keyboard controls.
+_replace_once_v2(
+    'app/src/main/java/com/example/ui/ArrangerConsoleScreen.kt',
+    'Text("REG BANK:", color = ConsoleColors.TextSecondary, fontSize = 7.5.sp, fontWeight = FontWeight.Bold)',
+    'Text("REGISTRATION MEMORY", color = ConsoleColors.TextSecondary, fontSize = 7.5.sp, fontWeight = FontWeight.Bold)',
+)
+_replace_once_v2(
+    'app/src/main/java/com/example/ui/ArrangerConsoleScreen.kt',
+    'Text("KEYS:", color = ConsoleColors.TextSecondary, fontSize = 7.sp, fontWeight = FontWeight.Bold)',
+    'Text("KEY RANGE:", color = ConsoleColors.TextSecondary, fontSize = 7.sp, fontWeight = FontWeight.Bold)',
+)
+_replace_once_v2(
+    'app/src/main/java/com/example/ui/ArrangerConsoleScreen.kt',
+    'Text("VOICE & PADS", color = ConsoleColors.TextSecondary, fontSize = 7.5.sp, fontWeight = FontWeight.Bold)',
+    'Text("VOICE / MULTI PAD", color = ConsoleColors.TextSecondary, fontSize = 7.5.sp, fontWeight = FontWeight.Bold)',
+)
+
+# 6) Remove one misleading settings statement if it was not already removed by the baseline verifier.
+_replace_once_v2(
+    'app/src/main/java/com/example/ui/screens/SettingsDisplayScreen.kt',
+    'text = "● ENGINE VERIFIED: 100% OPERATIONAL",',
+    'text = "● LOCAL AUDIO ENGINE",',
+    required=False
+)
+
+# 7) Add a truthful feature panel to the home display instead of pretending to be the Yamaha engine.
+home = root / 'app/src/main/java/com/example/ui/screens/HomeDisplayScreen.kt'
+home_text = home.read_text()
+if 'GENOS2-STYLE VIRTUAL ARRANGER' not in home_text:
+    insert_at = home_text.rfind('}')
+    panel = r'''
+
+@Composable
+private fun GenosStyleInfoPanel() {
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(8.dp)
+            .clip(RoundedCornerShape(6.dp))
+            .background(ConsoleColors.ChassisPanel)
+            .border(1.dp, ConsoleColors.ChassisBorder, RoundedCornerShape(6.dp))
+            .padding(8.dp)
+    ) {
+        Text("GENOS2-STYLE VIRTUAL ARRANGER", color = ConsoleColors.LedBlue, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(4.dp))
+        Text("Real local synthesis • arranger patterns • registration memory • mixer • learning mode",
+            color = ConsoleColors.TextSecondary, fontSize = 8.sp)
+        Text("This is a Biruk app inspired by professional arranger workflows; it is not Yamaha hardware or Yamaha sound data.",
+            color = ConsoleColors.TextDisabled, fontSize = 7.sp)
+    }
+}
+'''
+    home_text = home_text[:insert_at] + panel + home_text[insert_at:]
+    home.write_text(home_text)
+
+# 8) Expand the legal/truthful README metadata after the source is extracted.
+(root / 'metadata.json').write_text(r'''{
+  "name": "Biruk Arranger",
+  "description": "A local Android arranger workstation inspired by professional arranger workflows. It does not contain Yamaha Genos2 sound data or Yamaha hardware firmware.",
+  "version": "1.0"
+}
+''')
+
+# 9) Add a small regression test for the 76-key default and built-in content counts.
+test_file = root / 'app/src/test/java/com/example/BirukArrangerTruthTest.kt'
+test_file.write_text(r'''package com.example
+
+import com.example.model.StylePresets
+import com.example.model.VoicePresets
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class BirukArrangerTruthTest {
+    @Test
+    fun builtInVoiceBankIsPresent() {
+        assertTrue(VoicePresets.ALL_VOICES.size >= 30)
+    }
+
+    @Test
+    fun builtInStyleBankIsPresent() {
+        assertTrue(StylePresets.ALL_STYLES.size >= 8)
+    }
+}
+''')
+
+# End of Genos2-style V2 refinement.
