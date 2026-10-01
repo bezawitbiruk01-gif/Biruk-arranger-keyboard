@@ -1,120 +1,43 @@
 name: Build Biruk Arranger APK
 
 on:
-  workflow_dispatch:
   push:
     paths:
       - "arranger-pro (1).zip"
-      - ".github/workflows/**"
+      - "fix_source.py"
+      - ".github/workflows/build-biruk-arranger.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Set up Java 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "17"
 
       - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@v5
         with:
           gradle-version: "9.3.1"
 
-      - name: Extract project
+      - name: Extract source
         run: |
           rm -rf build-project
-          mkdir build-project
+          mkdir -p build-project
           unzip -q "arranger-pro (1).zip" -d build-project
-          test -f build-project/settings.gradle.kts
-          test -f build-project/app/build.gradle.kts
 
       - name: Apply verified source fixes
-        working-directory: build-project
         run: |
-          python3 - <<'PY'
-          from pathlib import Path
-
-          p = Path("app/src/main/java/com/example/ui/ArrangerConsoleScreen.kt")
-          s = p.read_text()
-
-          # Fix the confirmed compiler error: this state is represented as a String in the ViewModel.
-          s = s.replace("chordDetectMode: ChordDetectMode,", "chordDetectMode: String,")
-
-          # MIC VOL had only UI/state wiring and was not connected to a microphone input path.
-          s = s.replace("    micVolume: Float,\n", "")
-          s = s.replace("    onMicVolumeChange: (Float) -> Unit,\n", "")
-          s = s.replace("            micVolume = micVolume,\n", "")
-          s = s.replace("            onMicVolumeChange = { viewModel.setMicVolume(it) },\n", "")
-
-          mic_block = '''            RotaryKnob(
-                label = "MIC VOL",
-                value = micVolume,
-                onValueChange = onMicVolumeChange,
-                ledColor = ConsoleColors.LedGreen,
-                size = 36.dp
-            )
-
-'''
-          s = s.replace(mic_block, "")
-
-          p.write_text(s)
-
-          # Remove misleading "100% verified" and inaccurate drum-count claim.
-          p = Path("app/src/main/java/com/example/ui/screens/SettingsDisplayScreen.kt")
-          s = p.read_text()
-          s = s.replace("● ENGINE VERIFIED: 100% OPERATIONAL", "● LOCAL AUDIO ENGINE")
-          s = s.replace('DiagRow("POLYPHONY", "32 Dynamic Voices + 8 Drums")',
-                        'DiagRow("POLYPHONY", "32 Voice Synthesis Pool")')
-          p.write_text(s)
-
-          # Remove AI Studio / Gemini-only build hooks that the source code does not actually use.
-          p = Path("app/build.gradle.kts")
-          s = p.read_text()
-          s = s.replace("import com.google.gms.googleservices.GoogleServicesPlugin.MissingGoogleServicesStrategy\n\n", "")
-          s = s.replace("  alias(libs.plugins.secrets)\n", "")
-          s = s.replace("  alias(libs.plugins.google.services)\n", "")
-
-          start = s.find("// Configure the Secrets Gradle Plugin")
-          if start != -1:
-              end = s.find("dependencies {", start)
-              if end == -1:
-                  raise SystemExit("Could not locate dependencies block")
-              s = s[:start] + s[end:]
-
-          s = s.replace('  implementation(platform(libs.firebase.bom))\n', '')
-          for line in [
-              '  implementation(libs.firebase.ai)\n',
-              '  implementation(libs.firebase.appcheck.recaptcha)\n',
-              '  implementation(libs.firebase.appcheck.debug)\n',
-          ]:
-              s = s.replace(line, '')
-
-          p.write_text(s)
-          PY
-
-      - name: Remove CI-incompatible custom signing
-        working-directory: build-project
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          p = Path("app/build.gradle.kts")
-          s = p.read_text()
-          start = s.find("  signingConfigs {")
-          if start != -1:
-              end = s.find("\n  buildTypes {", start)
-              if end == -1:
-                  raise SystemExit("Could not locate buildTypes after signingConfigs")
-              s = s[:start] + s[end:]
-          s = s.replace('      signingConfig = signingConfigs.getByName("release")\n', '')
-          s = s.replace('    debug { signingConfig = signingConfigs.getByName("debugConfig") }\n', '')
-          p.write_text(s)
-          PY
+          python3 fix_source.py build-project
 
       - name: Build debug APK
         working-directory: build-project
@@ -126,11 +49,11 @@ jobs:
         run: |
           gradle --no-daemon --stacktrace testDebugUnitTest
 
-      - name: Collect APK
+      - name: Package verified APK
         run: |
           mkdir -p artifacts
           cp build-project/app/build/outputs/apk/debug/app-debug.apk artifacts/Biruk-Arranger-debug.apk
-          sha256sum artifacts/Biruk-Arranger-debug.apk | tee artifacts/SHA256SUM.txt
+          sha256sum artifacts/Biruk-Arranger-debug.apk > artifacts/SHA256SUM.txt
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
