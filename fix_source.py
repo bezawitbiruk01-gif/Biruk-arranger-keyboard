@@ -303,11 +303,13 @@ _replace_once_v2(
 )
 
 # 3) Widen the left and right hardware columns to reproduce the reference console proportions.
-_replace_once_v2(
-    'app/src/main/java/com/example/ui/ArrangerConsoleScreen.kt',
-    '.width(135.dp)\n            .fillMaxHeight()',
-    '.width(208.dp)\n            .fillMaxHeight()',
-)
+file_path = root / 'app/src/main/java/com/example/ui/ArrangerConsoleScreen.kt'
+text = file_path.read_text()
+old_width = '.width(135.dp)\n            .fillMaxHeight()'
+new_width = '.width(208.dp)\n            .fillMaxHeight()'
+if old_width in text:
+    text = text.replace(old_width, new_width, 1)
+    file_path.write_text(text)
 _replace_once_v2(
     'app/src/main/java/com/example/ui/ArrangerConsoleScreen.kt',
     '.width(225.dp)\n            .fillMaxHeight()',
