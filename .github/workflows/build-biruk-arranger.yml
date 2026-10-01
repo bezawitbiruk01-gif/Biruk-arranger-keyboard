@@ -34,6 +34,70 @@ jobs:
           test -f build-project/settings.gradle.kts
           test -f build-project/app/build.gradle.kts
 
+      - name: Apply verified source fixes
+        working-directory: build-project
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path("app/src/main/java/com/example/ui/ArrangerConsoleScreen.kt")
+          s = p.read_text()
+
+          # Fix the confirmed compiler error: this state is represented as a String in the ViewModel.
+          s = s.replace("chordDetectMode: ChordDetectMode,", "chordDetectMode: String,")
+
+          # MIC VOL had only UI/state wiring and was not connected to a microphone input path.
+          s = s.replace("    micVolume: Float,\n", "")
+          s = s.replace("    onMicVolumeChange: (Float) -> Unit,\n", "")
+          s = s.replace("            micVolume = micVolume,\n", "")
+          s = s.replace("            onMicVolumeChange = { viewModel.setMicVolume(it) },\n", "")
+
+          mic_block = '''            RotaryKnob(
+                label = "MIC VOL",
+                value = micVolume,
+                onValueChange = onMicVolumeChange,
+                ledColor = ConsoleColors.LedGreen,
+                size = 36.dp
+            )
+
+'''
+          s = s.replace(mic_block, "")
+
+          p.write_text(s)
+
+          # Remove misleading "100% verified" and inaccurate drum-count claim.
+          p = Path("app/src/main/java/com/example/ui/screens/SettingsDisplayScreen.kt")
+          s = p.read_text()
+          s = s.replace("● ENGINE VERIFIED: 100% OPERATIONAL", "● LOCAL AUDIO ENGINE")
+          s = s.replace('DiagRow("POLYPHONY", "32 Dynamic Voices + 8 Drums")',
+                        'DiagRow("POLYPHONY", "32 Voice Synthesis Pool")')
+          p.write_text(s)
+
+          # Remove AI Studio / Gemini-only build hooks that the source code does not actually use.
+          p = Path("app/build.gradle.kts")
+          s = p.read_text()
+          s = s.replace("import com.google.gms.googleservices.GoogleServicesPlugin.MissingGoogleServicesStrategy\n\n", "")
+          s = s.replace("  alias(libs.plugins.secrets)\n", "")
+          s = s.replace("  alias(libs.plugins.google.services)\n", "")
+
+          start = s.find("// Configure the Secrets Gradle Plugin")
+          if start != -1:
+              end = s.find("dependencies {", start)
+              if end == -1:
+                  raise SystemExit("Could not locate dependencies block")
+              s = s[:start] + s[end:]
+
+          s = s.replace('  implementation(platform(libs.firebase.bom))\n', '')
+          for line in [
+              '  implementation(libs.firebase.ai)\n',
+              '  implementation(libs.firebase.appcheck.recaptcha)\n',
+              '  implementation(libs.firebase.appcheck.debug)\n',
+          ]:
+              s = s.replace(line, '')
+
+          p.write_text(s)
+          PY
+
       - name: Remove CI-incompatible custom signing
         working-directory: build-project
         run: |
