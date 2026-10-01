@@ -1,9 +1,12 @@
 from pathlib import Path
-import re, json, sys
+import re
+import json
+import sys
 
 root = Path(sys.argv[1])
 
-# ArrangerConsoleScreen: remove non-functional MIC VOL control and fix compile-time type.
+# 1) Arranger UI: remove the MIC VOL control because there is no microphone input path
+# in the current AudioEngine; fix the confirmed ChordDetectMode compile error.
 p = root / "app/src/main/java/com/example/ui/ArrangerConsoleScreen.kt"
 s = p.read_text()
 s = s.replace('    val micVolume by viewModel.micVolume.collectAsStateWithLifecycle()\n', '')
@@ -11,21 +14,29 @@ s = s.replace('            micVolume = micVolume,\n', '')
 s = s.replace('            onMicVolumeChange = { viewModel.setMicVolume(it) },\n', '')
 s = s.replace('    micVolume: Float,\n', '')
 s = s.replace('    onMicVolumeChange: (Float) -> Unit,\n', '')
-s = re.sub(r'\n\s*RotaryKnob\(\s*label = "MIC VOL",\s*value = micVolume,\s*onValueChange = onMicVolumeChange,\s*ledColor = ConsoleColors\.LedGreen,\s*size = 36\.dp\s*\)\s*', '\\n', s)
+s = re.sub(
+    r'\n\s*RotaryKnob\(\s*label = "MIC VOL",\s*value = micVolume,\s*onValueChange = onMicVolumeChange,\s*ledColor = ConsoleColors\.LedGreen,\s*size = 36\.dp\s*\)\s*',
+    '\n',
+    s
+)
 s = s.replace('    chordDetectMode: ChordDetectMode,', '    chordDetectMode: String,')
 p.write_text(s)
 
-# Chord detector: deterministic two-note handling + truthful unknown result.
+# 2) Chord detection: deterministic two-note detection and no fabricated major-chord fallback.
 p = root / "app/src/main/java/com/example/model/ChordDetector.kt"
 s = p.read_text()
-s = s.replace('    FIFTH("5", listOf(0, 7))\n',
-              '    FIFTH("5", listOf(0, 7)),\n    UNKNOWN("?", listOf(0))\n')
+s = s.replace(
+    '    FIFTH("5", listOf(0, 7))\n',
+    '    FIFTH("5", listOf(0, 7)),\n    UNKNOWN("?", listOf(0))\n'
+)
 s = s.replace('            val list = pitchClasses.toList()\n', '            val list = pitchClasses.sorted()\n')
-s = s.replace('        // Fallback: root is lowest note, major triad\n        return ChordInfo(bassNote, ChordType.MAJOR, bassNote)\n',
-              '        // Do not invent a major chord for an unrecognized note set.\n        return ChordInfo(bassNote, ChordType.UNKNOWN, bassNote)\n')
+s = s.replace(
+    '        // Fallback: root is lowest note, major triad\n        return ChordInfo(bassNote, ChordType.MAJOR, bassNote)\n',
+    '        // Do not invent a major chord for an unrecognized note set.\n        return ChordInfo(bassNote, ChordType.UNKNOWN, bassNote)\n'
+)
 p.write_text(s)
 
-# Truthful diagnostics.
+# 3) Truthful diagnostics: remove unsupported 100% verification claims.
 p = root / "app/src/main/java/com/example/ui/screens/SettingsDisplayScreen.kt"
 s = p.read_text()
 s = s.replace('DiagRow("POLYPHONY", "32 Dynamic Voices + 8 Drums")',
@@ -34,7 +45,159 @@ s = s.replace('text = "● ENGINE VERIFIED: 100% OPERATIONAL",',
               'text = "● LOCAL AUDIO ENGINE",')
 p.write_text(s)
 
-# Remove unused AI Studio/Firebase build hooks and custom signing.
+# 4) Make the displayed 3-band EQ actually use low/mid/high gain settings.
+p = root / "app/src/main/java/com/example/audio/AudioEngine.kt"
+s = p.read_text()
+start = s.index('    // 3-Band Parametric Equalizer')
+end = s.index('    // High-volume, real-time procedural synthesizer', start)
+new_eq = r'''    // 3-Band parametric EQ using standard biquad filters.
+    class ThreeBandEq {
+        private val lowL = Biquad(); private val lowR = Biquad()
+        private val midL = Biquad(); private val midR = Biquad()
+        private val highL = Biquad(); private val highR = Biquad()
+
+        fun process(bufL: FloatArray, bufR: FloatArray, frames: Int, settings: EqSettings) {
+            lowL.setLowShelf(SAMPLE_RATE.toFloat(), 180f, settings.lowGainDb, 1f)
+            lowR.setLowShelf(SAMPLE_RATE.toFloat(), 180f, settings.lowGainDb, 1f)
+            midL.setPeaking(SAMPLE_RATE.toFloat(), 1200f, settings.midGainDb, 0.9f)
+            midR.setPeaking(SAMPLE_RATE.toFloat(), 1200f, settings.midGainDb, 0.9f)
+            highL.setHighShelf(SAMPLE_RATE.toFloat(), 5000f, settings.highGainDb, 1f)
+            highR.setHighShelf(SAMPLE_RATE.toFloat(), 5000f, settings.highGainDb, 1f)
+
+            for (i in 0 until frames) {
+                var l = lowL.process(bufL[i])
+                l = midL.process(l)
+                l = highL.process(l)
+
+                var r = lowR.process(bufR[i])
+                r = midR.process(r)
+                r = highR.process(r)
+
+                bufL[i] = l
+                bufR[i] = r
+            }
+        }
+
+        private class Biquad {
+            private var b0 = 1f
+            private var b1 = 0f
+            private var b2 = 0f
+            private var a1 = 0f
+            private var a2 = 0f
+            private var x1 = 0f
+            private var x2 = 0f
+            private var y1 = 0f
+            private var y2 = 0f
+
+            fun setLowShelf(sampleRate: Float, freq: Float, gainDb: Float, slope: Float) {
+                val a = 10.0.pow(gainDb / 40.0)
+                val w0 = 2.0 * Math.PI * freq / sampleRate
+                val cosW = cos(w0)
+                val sinW = sin(w0)
+                val alpha = sinW / 2.0 * sqrt((a + 1.0 / a) * (1.0 / slope - 1.0) + 2.0)
+                val twoSqrtAAlpha = 2.0 * sqrt(a) * alpha
+
+                normalize(
+                    a * ((a + 1) - (a - 1) * cosW + twoSqrtAAlpha),
+                    2 * a * ((a - 1) - (a + 1) * cosW),
+                    a * ((a + 1) - (a - 1) * cosW - twoSqrtAAlpha),
+                    (a + 1) + (a - 1) * cosW + twoSqrtAAlpha,
+                    -2 * ((a - 1) + (a + 1) * cosW),
+                    (a + 1) + (a - 1) * cosW - twoSqrtAAlpha
+                )
+            }
+
+            fun setPeaking(sampleRate: Float, freq: Float, gainDb: Float, q: Float) {
+                val a = 10.0.pow(gainDb / 40.0)
+                val w0 = 2.0 * Math.PI * freq / sampleRate
+                val cosW = cos(w0)
+                val sinW = sin(w0)
+                val alpha = sinW / (2.0 * q)
+                normalize(
+                    1 + alpha * a,
+                    -2 * cosW,
+                    1 - alpha * a,
+                    1 + alpha / a,
+                    -2 * cosW,
+                    1 - alpha / a
+                )
+            }
+
+            fun setHighShelf(sampleRate: Float, freq: Float, gainDb: Float, slope: Float) {
+                val a = 10.0.pow(gainDb / 40.0)
+                val w0 = 2.0 * Math.PI * freq / sampleRate
+                val cosW = cos(w0)
+                val sinW = sin(w0)
+                val alpha = sinW / 2.0 * sqrt((a + 1.0 / a) * (1.0 / slope - 1.0) + 2.0)
+                val twoSqrtAAlpha = 2.0 * sqrt(a) * alpha
+
+                normalize(
+                    a * ((a + 1) + (a - 1) * cosW + twoSqrtAAlpha),
+                    -2 * a * ((a - 1) + (a + 1) * cosW),
+                    a * ((a + 1) + (a - 1) * cosW - twoSqrtAAlpha),
+                    (a + 1) - (a - 1) * cosW + twoSqrtAAlpha,
+                    2 * ((a - 1) - (a + 1) * cosW),
+                    (a + 1) - (a - 1) * cosW - twoSqrtAAlpha
+                )
+            }
+
+            private fun normalize(nb0: Double, nb1: Double, nb2: Double, na0: Double, na1: Double, na2: Double) {
+                b0 = (nb0 / na0).toFloat()
+                b1 = (nb1 / na0).toFloat()
+                b2 = (nb2 / na0).toFloat()
+                a1 = (na1 / na0).toFloat()
+                a2 = (na2 / na0).toFloat()
+            }
+
+            fun process(input: Float): Float {
+                val output = b0 * input + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2
+                x2 = x1
+                x1 = input
+                y2 = y1
+                y1 = output
+                return output
+            }
+        }
+    }
+
+'''
+s = s[:start] + new_eq + s[end:]
+p.write_text(s)
+
+# 5) Remove the generated Robolectric placeholder that is incompatible with the CI image
+# and does not validate application logic.
+robo = root / "app/src/test/java/com/example/ExampleRobolectricTest.kt"
+if robo.exists():
+    robo.unlink()
+
+# 6) Add a real unit test for the chord-detection fix.
+test = root / "app/src/test/java/com/example/ChordDetectorTruthTest.kt"
+test.write_text('''package com.example
+
+import com.example.model.ChordDetector
+import com.example.model.ChordType
+import org.junit.Assert.assertEquals
+import org.junit.Test
+
+class ChordDetectorTruthTest {
+    @Test
+    fun knownMajorChordIsDetected() {
+        assertEquals(ChordType.MAJOR, ChordDetector.detectChord(setOf(60, 64, 67))?.type)
+    }
+
+    @Test
+    fun unknownNotesAreNotInventedAsMajor() {
+        assertEquals(ChordType.UNKNOWN, ChordDetector.detectChord(setOf(60, 61, 66))?.type)
+    }
+
+    @Test
+    fun fifthIsDetectedDeterministically() {
+        assertEquals(ChordType.FIFTH, ChordDetector.detectChord(setOf(60, 67))?.type)
+    }
+}
+''')
+
+# 7) Remove unused AI Studio/Firebase build hooks and custom signing.
 p = root / "app/build.gradle.kts"
 s = p.read_text()
 s = s.replace('import com.google.gms.googleservices.GoogleServicesPlugin.MissingGoogleServicesStrategy\n\n', '')
@@ -63,6 +226,7 @@ for line in [
     s = s.replace(line, '')
 p.write_text(s)
 
+# 8) Remove unused Gemini/Firebase plugin catalog entries.
 p = root / "build.gradle.kts"
 s = p.read_text()
 s = s.replace('  alias(libs.plugins.secrets) apply false\n', '')
@@ -94,7 +258,6 @@ p.write_text(s)
 (root / ".env.example").write_text('# No API keys are required by the current local audio engine.\n')
 (root / "README.md").write_text('# Biruk Arranger\n\nNative Android arranger keyboard with local procedural audio synthesis.\n\nThe current build does not require Gemini, Firebase, or an external API key.\n')
 
-# Metadata no longer claims a server-side Gemini capability.
 p = root / "metadata.json"
 data = json.loads(p.read_text())
 data["description"] = "Native Android arranger keyboard with local procedural audio synthesis, automatic accompaniment styles, learning content, registrations, mixer and effects."
