@@ -364,33 +364,7 @@ _replace_once_v2(
     required=False
 )
 
-# 7) Add a truthful feature panel to the home display instead of pretending to be the Yamaha engine.
-home = root / 'app/src/main/java/com/example/ui/screens/HomeDisplayScreen.kt'
-home_text = home.read_text()
-if 'GENOS2-STYLE VIRTUAL ARRANGER' not in home_text:
-    insert_at = home_text.rfind('}')
-    panel = r'''
-
-@Composable
-private fun GenosStyleInfoPanel() {
-    Column(
-        modifier = Modifier.fillMaxWidth().padding(8.dp)
-            .clip(RoundedCornerShape(6.dp))
-            .background(ConsoleColors.ChassisPanel)
-            .border(1.dp, ConsoleColors.ChassisBorder, RoundedCornerShape(6.dp))
-            .padding(8.dp)
-    ) {
-        Text("GENOS2-STYLE VIRTUAL ARRANGER", color = ConsoleColors.LedBlue, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-        Spacer(Modifier.height(4.dp))
-        Text("Real local synthesis • arranger patterns • registration memory • mixer • learning mode",
-            color = ConsoleColors.TextSecondary, fontSize = 8.sp)
-        Text("This is a Biruk app inspired by professional arranger workflows; it is not Yamaha hardware or Yamaha sound data.",
-            color = ConsoleColors.TextDisabled, fontSize = 7.sp)
-    }
-}
-'''
-    home_text = home_text[:insert_at] + panel + home_text[insert_at:]
-    home.write_text(home_text)
+# 7) Home-screen copy is intentionally left unchanged; the chassis work stays in the verified console.
 
 # 8) Expand the legal/truthful README metadata after the source is extracted.
 (root / 'metadata.json').write_text(r'''{
